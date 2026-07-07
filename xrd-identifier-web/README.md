@@ -1,32 +1,76 @@
-# React + TypeScript + Vite
+# XRD Identifier(ブラウザ版)
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+粉末XRD測定データと参照ピークデータ(ICDD/PDF由来のピーク表)を照合し、
+**候補相のランキング・根拠ピーク・未説明ピーク・同定結果グラフ**を出力する同定支援アプリ。
+相を断定するツールではなく、「候補+根拠提示」型。
 
-Currently, two official plugins are available:
+すべての処理がブラウザ内で完結します(データの外部送信なし・OS非依存)。
+参照値DBはブラウザの IndexedDB に保存され、次回起動時も残ります。
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## 使い方(開発)
 
-## React Compiler
+Node.js(v20以上)が必要なのは開発時のみ。
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+npm install        # 初回のみ
+npm run dev        # 開発サーバー起動 → 表示されたURLをブラウザで開く
+npm test           # 単体テスト(Vitest)
+npm run typecheck  # 型チェック
+npm run build      # 配布用ビルド → dist/
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+## 使い方(配布)
+
+`npm run build` で生成される `dist/` は静的ファイルのみ。
+利用者は Node.js 不要で、以下のいずれかで開く:
+
+- ローカルサーバーで配信: `npx serve dist` など
+- GitHub Pages 等の静的ホスティングに `dist/` を配置
+
+(`file://` 直開きは ES modules の制約で動きません。必ず http 経由で開くこと)
+
+## 操作フロー
+
+1. **測定データ** ― txt/csv をドロップ(タブ/空白/カンマ自動判定、3列以上なら列選択ダイアログ)
+2. **参照値DB** ― ピーク表 txt/csv をインポート
+   - 列マッピング確認ダイアログが出る(`l k h I 2θ d` のような非標準列順に対応)
+   - Bragg の式による 2θ–d 整合チェックで取り違えを警告
+   - 相名・PDF番号・元素・色・マーカー・配向仮定を編集して保存
+   - 「DB を JSON で書き出し / 取り込み」でバックアップ・PC間共有が可能
+3. **解析設定** ― 原料組成(例: `Ba3Cu2Fe24O41`)から候補相を自動選択(手動で加除可)
+4. **解析実行** ― ランキング・スコア内訳・根拠ピーク・警告を表示
+5. **グラフ** ― 相ごと表示ON/OFF、2θ/強度範囲、未同定ピーク表示、参照スティック。SVG/PNG保存
+6. **レポート** ― match_report.txt / result_table.csv / peak_list.csv / unmatched_peaks.csv
+
+## 設計方針(メンテナンス性)
+
+- **`src/core/` は React 非依存の純関数のみ**。解析ロジックの変更はここだけで完結し、全て `tests/` の単体テストで検証できる
+  - `parse/` 読み込み(トークン化・列推定・正規化)
+  - `peaks/` Savitzky-Golay 平滑化・ベースライン推定・ピーク検出(半値幅付き)
+  - `match/` ゼロシフト推定(全相共通)・1対1割当・配向・スコアリング・未説明ピーク
+  - `candidates/` 原料組成からの候補判定
+  - `export/` CSV・レポート文字列生成
+  - `analyze.ts` 上記のオーケストレーション
+- `src/plot/` 自作SVG描画(外部グラフライブラリ非依存)
+- `src/db/` IndexedDB ラッパ
+- `src/ui/` React コンポーネント。状態は `App.tsx` に集約
+- 実行時依存は react / react-dom のみ
+
+### 旧 Python 試作からの主な改善
+
+- 観測ピークの**1対1割当**(重複マッチによるスコア過大を排除)
+- ゼロシフトは**全相共通で一度だけ推定**(相ごとの循環推定を排除)
+- 参照強度を **max=100 に正規化**(強度スケール依存の閾値バグを排除)
+- **原料組成の事前スコア**(スコアの15%)と候補相自動選択
+- 列マッピングの**人間確認UI** + Bragg 整合チェック
+- 相ごとの配向設定(custom 条件含む)
+- ピーク強度はベースライン**補正後**の値を使用、半値幅も出力
+- 未説明ピークは「有力相のみで説明済み」と判定(閾値変更可)
+
+## 次回への課題
+
+- **PDF 直接出力**(現状はブラウザの印刷機能 Ctrl+P で代替)
+- プロジェクト保存/過去解析の再読み込み(解析結果のJSON保存)
+- 参照スティックの相数上限(現在4相)の解除・レイアウト改善
+- CIF 読み込み・理論XRDパターン生成
+- ズーム等のグラフ対話操作

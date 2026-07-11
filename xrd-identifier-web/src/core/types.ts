@@ -1,174 +1,196 @@
 /**
- * core 全体で共有する型定義。
- * core/ 以下は React に依存しない純粋ロジックのみを置く。
+ * アプリ全体で共有する型定義。
+ * 「XRD / MH / MT Graph Maker」の state 構造を TypeScript 化したもの。
  */
 
-/** 測定パターン(2θ 昇順ソート済み) */
-export interface MeasuredPattern {
-  /** 試料名(ファイル名由来) */
-  sampleName: string;
-  twoTheta: number[];
-  intensity: number[];
+export type GraphMode = 'xrd' | 'mh' | 'mt';
+
+export interface Pt {
+  x: number;
+  y: number;
 }
 
-/** 検出された測定ピーク */
-export interface MeasuredPeak {
-  twoTheta: number;
-  /** ベースライン補正後の強度(スコアリングに使用) */
-  intensity: number;
-  /** 生データの強度(表示・出力用) */
-  rawIntensity: number;
-  prominence: number;
-  /** 半値幅(deg)。推定不能なら 0 */
-  fwhm: number;
-}
-
-/** 参照ピーク(1本) */
+/** 参照相の1ピーク */
 export interface RefPeak {
-  h: number;
-  k: number;
-  l: number;
-  /** max=100 に正規化済みの相対強度 */
-  intensity: number;
-  twoTheta: number;
   d: number | null;
-}
-
-/** 配向モード */
-export type OrientationMode = 'none' | '00l' | 'h00' | '0k0' | 'hk0' | 'custom';
-
-/** custom 配向の条件: h,k,l それぞれ 'zero'(=0) / 'nonzero'(≠0) / 'any' */
-export interface CustomOrientationRule {
-  h: 'zero' | 'nonzero' | 'any';
-  k: 'zero' | 'nonzero' | 'any';
-  l: 'zero' | 'nonzero' | 'any';
-}
-
-export interface OrientationSetting {
-  mode: OrientationMode;
-  custom?: CustomOrientationRule;
-}
-
-/** 参照ファイルの列マッピング(-1 = その列なし) */
-export interface ColumnMapping {
-  h: number;
-  k: number;
-  l: number;
+  angle: number;
   intensity: number;
-  twoTheta: number;
-  d: number;
+  iNorm: number;
+  h: number | null;
+  k: number | null;
+  l: number | null;
+  phase: string;
 }
 
-/** 参照相(DB に保存される単位) */
-export interface ReferencePhase {
-  /** IndexedDB キー(UUID) */
+/** 参照相(内蔵 or 読み込み) */
+export interface RefPhase {
   id: string;
-  phaseName: string;
-  pdfId: string;
-  /** 含まれる元素記号(組成候補判定に使用) */
-  elements: string[];
-  /** 相分類(例: "M-type hexaferrite", "spinel", "raw material") */
-  phaseFamily: string;
+  name: string;
+  rawName: string;
+  displayName: string;
+  visible: boolean;
+  builtin: boolean;
   color: string;
-  /** SVG マーカー種 */
-  marker: MarkerShape;
-  orientation: OrientationSetting;
+  marker: string;
   peaks: RefPeak[];
-  /** インポート時に確定した列マッピング(再インポート時の初期値) */
-  columnMapping: ColumnMapping;
-  sourceFileName: string;
-  importedAt: string; // ISO 8601
 }
 
-export type MarkerShape =
-  | 'circle'
-  | 'triangle-down'
-  | 'triangle-up'
-  | 'diamond'
-  | 'square'
-  | 'cross'
-  | 'plus'
-  | 'star';
-
-/** 1本の参照ピークと観測ピークの対応 */
-export interface PeakMatch {
-  refTwoTheta: number;
-  obsTwoTheta: number;
-  obsIntensity: number;
-  refIntensity: number;
-  /** obs - (ref + zeroShift) */
-  diff: number;
-  h: number;
-  k: number;
-  l: number;
+/** XRD 測定データ */
+export interface XrdTrace {
+  id: string;
+  name: string;
+  rawName: string;
+  displayName: string;
+  comment: string;
+  visible: boolean;
+  points: Pt[];
+  /** このグラフに表示する参照相 id */
+  activeRefs: string[];
 }
 
-/** 相ごとの照合結果 */
-export interface PhaseResult {
-  phaseId: string;
-  phaseName: string;
-  pdfId: string;
-  score: number;
-  /** スコア内訳(UI で根拠表示するため保持) */
-  breakdown: ScoreBreakdown;
-  zeroShift: number;
-  matches: PeakMatch[];
-  matchedCount: number;
-  refCountInRange: number;
-  strongMatchedCount: number;
-  strongRefCount: number;
-  orientation: OrientationSetting;
+export interface MhPoint {
+  hOe: number;
+  mEmu: number;
+}
+
+export interface MhTrace {
+  id: string;
+  name: string;
+  rawName: string;
+  displayName: string;
+  visible: boolean;
   color: string;
-  marker: MarkerShape;
-  notes: string[];
+  mass: number | null;
+  points: MhPoint[];
 }
 
-export interface ScoreBreakdown {
-  position: number;
-  strongExplained: number;
-  observedExplained: number;
-  composition: number;
-  intensityCorr: number;
+export interface MtPoint {
+  temp: number;
+  mEmu: number;
+  hOe: number | null;
 }
 
-/** 解析パラメータ(UI から渡す) */
-export interface AnalysisParams {
-  /** 2θ 照合許容幅 (deg) */
-  toleranceDeg: number;
-  /** ゼロシフト探索窓 (deg) */
-  shiftWindowDeg: number;
-  /** ピーク prominence。null なら自動 */
-  prominence: number | null;
-  /** 最小ピーク間隔 (deg) */
-  minDistanceDeg: number;
-  smoothing: boolean;
-  baselineCorrection: boolean;
-  /** 原料組成の元素集合(空なら組成スコアは中立) */
-  sampleElements: string[];
-  /** 未説明ピーク判定に使う「有力相」のスコア閾値 */
-  unmatchedScoreThreshold: number;
+export interface TcAdoption {
+  temp: number;
+  method: string;
+  score?: number;
+  confidence?: number;
 }
 
-export const DEFAULT_PARAMS: AnalysisParams = {
-  toleranceDeg: 0.25,
-  shiftWindowDeg: 0.5,
-  prominence: null,
-  minDistanceDeg: 0.15,
-  smoothing: true,
-  baselineCorrection: true,
-  sampleElements: [],
-  unmatchedScoreThreshold: 0.4,
-};
-
-/** 解析全体の結果 */
-export interface AnalysisResult {
-  sampleName: string;
-  params: AnalysisParams;
-  measuredPeaks: MeasuredPeak[];
-  /** 全相共通のゼロシフト (deg) */
-  globalZeroShift: number;
-  results: PhaseResult[];
-  unmatchedPeaks: MeasuredPeak[];
-  /** 解析全体への警告(UI バナー表示用) */
-  warnings: string[];
+export interface MtTrace {
+  id: string;
+  name: string;
+  rawName: string;
+  displayName: string;
+  visible: boolean;
+  color: string;
+  mass: number | null;
+  points: MtPoint[];
+  adoptedTcList: TcAdoption[];
 }
+
+export interface ZoomView {
+  xMin: number;
+  xMax: number;
+  yMin: number;
+  yMax: number;
+}
+
+export interface MarkerOffset {
+  twoTheta?: number;
+  yOffset?: number;
+}
+
+/** 参照ピークと実測ピークの対応(格子定数計算に使用) */
+export interface PeakAlignment {
+  key: string;
+  referenceName: string;
+  sampleName?: string;
+  traceId?: string;
+  originalTwoTheta: number;
+  correctedTwoTheta: number;
+  matchedMeasuredPeakTwoTheta: number;
+  h: number | string | null;
+  k: number | string | null;
+  l: number | string | null;
+  d: number | null;
+  intensity: number | null;
+  use: boolean;
+  autoAssigned?: boolean;
+}
+
+export interface TcAnnotation {
+  x?: number;
+  y?: number;
+  w?: number;
+  h?: number;
+  targetX?: number;
+  targetY?: number;
+}
+
+export interface LegendPos {
+  x: number;
+  y: number;
+}
+
+export interface MtDerivativeLayout {
+  d1BaseRatio: number;
+  d2BaseRatio: number;
+}
+
+/** 全設定値(元アプリの SETTING_IDS に対応。checkbox は boolean、それ以外は string) */
+export type Settings = Record<string, string | boolean>;
+
+/** undo/redo・プロジェクト保存の対象となるアプリ状態 */
+export interface AppState {
+  mode: GraphMode;
+  settings: Settings;
+  measured: XrdTrace[];
+  refs: RefPhase[];
+  mhTraces: MhTrace[];
+  mtTraces: MtTrace[];
+  xrdZoomView: ZoomView | null;
+  xrdZoomHistory: (ZoomView | null)[];
+  mhZoomView: ZoomView | null;
+  mhZoomHistory: (ZoomView | null)[];
+  mtZoomView: ZoomView | null;
+  mtZoomHistory: (ZoomView | null)[];
+  xrdPeakAlignments: Record<string, PeakAlignment>;
+  xrdMarkerOffsets: Record<string, MarkerOffset>;
+  mtTcAnnotations: Record<string, TcAnnotation>;
+  mtDerivativeLayout: MtDerivativeLayout;
+  mhLegend: LegendPos | null;
+  mtLegend: LegendPos | null;
+  probe: { angle: number } | null;
+  lastSelectedMarkerKey: string | null;
+  lastSelectedMarkerPhase: string | null;
+}
+
+export const palette = [
+  '#e11d48',
+  '#2563eb',
+  '#059669',
+  '#8b5cf6',
+  '#d97706',
+  '#0f766e',
+  '#dc2626',
+  '#7c3aed',
+];
+
+export const markerOptions = [
+  'triangle_down',
+  'triangle_up',
+  'triangle_left',
+  'triangle_right',
+  'circle',
+  'diamond',
+  'square',
+  'cross',
+  'plus',
+  'star',
+  'star6',
+  'wedge_down',
+  'wedge_up',
+  'wedge_left',
+  'wedge_right',
+];

@@ -1,84 +1,70 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { parseNumericTable, splitLine, tryParseNumber } from '../src/core/parse/tokenize';
-import { previewMeasurement, buildMeasurement, sampleNameFromFileName } from '../src/core/parse/measurement';
-import { guessColumnMapping, braggMismatchRatio } from '../src/core/parse/columnGuess';
-import { buildReferencePeaks, phaseNameFromFileName, elementsFromText } from '../src/core/parse/reference';
+import { parseMeasured } from '../src/core/parse/xrd';
+import { parseReference } from '../src/core/parse/refPeaks';
+import { parseMH } from '../src/core/parse/vsmMh';
+import { parseMT } from '../src/core/parse/vsmMt';
+import { buildBuiltinRefs } from '../src/core/refs/builtin';
 
-const SAMPLE_DIR = join(__dirname, '..', 'sample_data');
-const MEAS = readFileSync(join(SAMPLE_DIR, '007_Ba3Cu2Fe24O41_1050C.TXT'), 'utf-8');
-const REF = readFileSync(join(SAMPLE_DIR, 'M-type BaFe12O19 PDF 00-039-1433.txt'), 'utf-8');
-
-describe('tokenize', () => {
-  it('splits tab/space/comma lines', () => {
-    expect(splitLine('10\t43.3')).toEqual(['10', '43.3']);
-    expect(splitLine('1, 2, 3')).toEqual(['1', '2', '3']);
-    expect(splitLine('a  b')).toEqual(['a', 'b']);
-  });
-  it('parses numbers with unicode minus, rejects garbage', () => {
-    expect(tryParseNumber('−1.5')).toBe(-1.5);
-    expect(tryParseNumber('1e3')).toBe(1000);
-    expect(tryParseNumber('abc')).toBeNull();
-    expect(tryParseNumber('')).toBeNull();
-  });
-  it('keeps header and numeric rows separately', () => {
-    const t = parseNumericTable('l k h I 2θ d\n1 0 1 7 17.766 4.98843\n2 0 1 14 18.973 4.67371');
-    expect(t.headers).toEqual(['l', 'k', 'h', 'I', '2θ', 'd']);
-    expect(t.rows).toHaveLength(2);
-    expect(t.columnCount).toBe(6);
+describe('parseMeasured', () => {
+  it('2列の数値表を読み、xでソートする', () => {
+    const tr = parseMeasured('# comment\n30.0 120\n20.0, 100\n25.0\t110\n', 'sample.xy');
+    expect(tr.points.map((p) => p.x)).toEqual([20, 25, 30]);
+    expect(tr.displayName).toBe('sample');
   });
 });
 
-describe('measurement parsing (real sample)', () => {
-  it('reads the sample measurement file', () => {
-    const prev = previewMeasurement(MEAS);
-    expect(prev.needsColumnConfirmation).toBe(false);
-    const m = buildMeasurement(prev.table, prev.suggestedTwoThetaCol, prev.suggestedIntensityCol, 'sample');
-    expect(m.twoTheta[0]).toBeCloseTo(10, 5);
-    expect(m.twoTheta.length).toBe(m.intensity.length);
-    // 昇順ソート済み
-    for (let i = 1; i < m.twoTheta.length; i++) {
-      expect(m.twoTheta[i]).toBeGreaterThan(m.twoTheta[i - 1]);
-    }
+describe('parseReference', () => {
+  it('l k h I 2θ d ヘッダ形式を読む', () => {
+    const ref = parseReference('l k h I 2θ d\n0 1 1 13 32.509 2.75201\n2 0 0 37 35.418 2.53236\n', 'CuO.txt');
+    expect(ref.peaks).toHaveLength(2);
+    expect(ref.peaks[0].angle).toBeCloseTo(32.509);
+    expect(ref.peaks[0].h).toBe(1); // ヘッダ順 l k h
+    expect(ref.peaks[0].l).toBe(0);
+    expect(ref.peaks[1].iNorm).toBeCloseTo(100);
   });
-  it('extracts sample name from file name', () => {
-    expect(sampleNameFromFileName('007_Ba3Cu2Fe24O41_1050C.TXT')).toBe('007_Ba3Cu2Fe24O41_1050C');
+
+  it('d 2θ I fix h k l 形式を読む', () => {
+    const ref = parseReference('d 2θ I fix h k l\n 2.96000 30.168 65 1 1 0\n 2.93200 30.463 100 1 0 4\n', 'QS.txt');
+    expect(ref.peaks).toHaveLength(2);
+    expect(ref.peaks[1].angle).toBeCloseTo(30.463);
+    expect(ref.peaks[1].h).toBe(1);
+    expect(ref.peaks[1].l).toBe(4);
   });
 });
 
-describe('reference parsing (real l k h I 2θ d file)', () => {
-  const table = parseNumericTable(REF);
-  const guess = guessColumnMapping(table);
+describe('buildBuiltinRefs', () => {
+  it('内蔵参照13相をすべてパースできる', () => {
+    const refs = buildBuiltinRefs();
+    expect(refs).toHaveLength(13);
+    for (const r of refs) expect(r.peaks.length).toBeGreaterThan(5);
+    const qs = refs.find((r) => r.displayName === 'QS-type');
+    expect(qs).toBeDefined();
+    const main = qs!.peaks.reduce((a, b) => (a.iNorm >= b.iNorm ? a : b));
+    expect(main.angle).toBeCloseTo(30.463);
+  });
+});
 
-  it('guesses the non-standard l k h order from the header', () => {
-    expect(guess.mapping).toMatchObject({ l: 0, k: 1, h: 2, intensity: 3, twoTheta: 4, d: 5 });
-    expect(guess.confident).toBe(true);
+describe('parseMH', () => {
+  it('sample weight と H/M 列を読む', () => {
+    const text = 'sample name,foo\nsample weight,0.0213\nH(Oe),M(emu)\n-1000,-0.5\n0,0.01\n1000,0.5\n';
+    const tr = parseMH(text, 'a.VSM');
+    expect(tr.name).toBe('foo');
+    expect(tr.mass).toBeCloseTo(0.0213);
+    expect(tr.points).toHaveLength(3);
+    expect(tr.points[0].hOe).toBe(-1000);
   });
 
-  it('bragg check passes with the correct mapping and fails when 2θ/d are swapped', () => {
-    expect(braggMismatchRatio(table, guess.mapping)!).toBeLessThan(0.05);
-    const swapped = { ...guess.mapping, twoTheta: 5, d: 4 };
-    expect(braggMismatchRatio(table, swapped)!).toBeGreaterThan(0.5);
+  it('ヘッダなし数値表は kOe を Oe へ換算する', () => {
+    const tr = parseMH('-10 -0.5\n0 0\n10 0.5\n', 'b.txt');
+    expect(tr.points[0].hOe).toBe(-10000);
   });
+});
 
-  it('normalizes intensities to max=100 and sorts by 2θ', () => {
-    const peaks = buildReferencePeaks(table, guess.mapping);
-    expect(Math.max(...peaks.map((p) => p.intensity))).toBeCloseTo(100, 6);
-    // 最強ピークは 32.149° (7 0 1)
-    const strongest = peaks.find((p) => p.intensity === 100)!;
-    expect(strongest.twoTheta).toBeCloseTo(32.149, 3);
-    expect(strongest.h).toBe(1); // l k h 順なので h は3列目=1
-    expect(strongest.l).toBe(7);
-  });
-
-  it('extracts phase name and PDF id from file name', () => {
-    const { phaseName, pdfId } = phaseNameFromFileName('M-type BaFe12O19 PDF 00-039-1433.txt');
-    expect(phaseName).toBe('M-type BaFe12O19');
-    expect(pdfId).toBe('00-039-1433');
-  });
-
-  it('extracts elements from formula text', () => {
-    expect(elementsFromText('M-type BaFe12O19').sort()).toEqual(['Ba', 'Fe', 'O']);
+describe('parseMT', () => {
+  it('Temp./M 列を読み、温度でソートする', () => {
+    const text = 'sample weight,0.02\nTemp.,H(Oe),M(emu)\n300,1000,0.5\n100,1000,0.9\n200,1000,0.7\n';
+    const tr = parseMT(text, 'c.VSM');
+    expect(tr.points.map((p) => p.temp)).toEqual([100, 200, 300]);
+    expect(tr.mass).toBeCloseTo(0.02);
   });
 });
